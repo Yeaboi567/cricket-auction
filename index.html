@@ -482,7 +482,13 @@ async function advanceToNextPlayerAdmin() {
   if(nextIdx >= players.length) {
     updates.auctionStarted = false;
     updates.phase = 'completed';
-    showToast("AUCTION COMPLETED! All players done.", false);
+    showToast("AUCTION COMPLETED! Room will close in 10 seconds...", false);
+    setTimeout(() => {
+      database.ref(`rooms/${currentRoomId}`).remove().then(() => {
+        showToast("Room closed!", false);
+        setTimeout(() => location.reload(), 2000);
+      });
+    }, 10000);
   } else {
     let nextPlayer = players[nextIdx];
     if(nextPlayer && !nextPlayer.sold) updates.currentBid = nextPlayer.basePrice || 0;
