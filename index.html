@@ -189,7 +189,23 @@ function showToast(msg, isError=false) {
   setTimeout(()=> toast.classList.add('hidden'), 3000);
 }
 
+async function cleanupOldRooms() {
+  const INACTIVE_MS = 2 * 60 * 60 * 1000; // 2 hours
+  const now = Date.now();
+  const snapshot = await database.ref('rooms').get();
+  if (!snapshot.exists()) return;
+  const rooms = snapshot.val();
+  for (let roomId in rooms) {
+    let lastActivity = rooms[roomId].lastActivity || rooms[roomId].createdAt || 0;
+    if (now - lastActivity > INACTIVE_MS) {
+      await database.ref(`rooms/${roomId}`).remove();
+      console.log(`Deleted inactive room: ${roomId}`);
+    }
+  }
+}
+
 async function createNewRoom() {
+  await cleanupOldRooms();
   let nameInput = document.getElementById('playerNameInput').value.trim();
   if(!nameInput) { showToast("Enter your name first", true); return; }
   myDisplayName = nameInput;
@@ -210,7 +226,9 @@ async function createNewRoom() {
     auctionStarted: false,
     soldCount: 0,
     unsoldCount: 0,
-    actionHistory: []
+    actionHistory: [],
+    createdAt: Date.now(),
+    lastActivity: Date.now()
   };
   await roomRef.set(initialData);
   isAdmin = true;
@@ -218,6 +236,7 @@ async function createNewRoom() {
 }
 
 async function joinRoom() {
+  await cleanupOldRooms();
   let code = document.getElementById('roomCodeInput').value.trim().toUpperCase();
   let name = document.getElementById('playerNameInput').value.trim();
   if(!code || !name) { showToast("Room code and name required", true); return; }
@@ -234,6 +253,7 @@ async function joinRoom() {
       name: myDisplayName, purse: 15000, spent:0, squad: [], hasPassed: false, joinedAt: Date.now()
     });
   }
+  await roomRef.update({ lastActivity: Date.now() });
   isAdmin = (roomData.adminId === myClientId);
   joinRoomAsParticipant(code);
 }
