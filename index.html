@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Live Cricket Auction | Online Multiplayer</title>
+<!-- Firebase SDK (free realtime backend) -->
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap');
+*{font-family:'Poppins',sans-serif;}
+body{background:#0a0a1a; margin:0; overflow-x:hidden}
+.timer-danger{animation:pulse .5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.player-card-glow{box-shadow:0 0 40px rgba(255,215,0,.3)}
+.owner-panel{transition:all .2s ease}
+.owner-panel.active-bidder{box-shadow:0 0 30px currentColor; transform:scale(1.01)}
+button:disabled{opacity:0.4; cursor:not-allowed}
+.paddle-up{animation:paddleUp .4s ease-out forwards}
+.paddle-down{animation:paddleDown .3s ease-in forwards}
+@keyframes paddleUp{0%{transform:translateY(60px) rotate(0deg);opacity:0}30%{transform:translateY(-10px) rotate(-5deg);opacity:1}100%{transform:translateY(0) rotate(0deg);opacity:1}}
+@keyframes paddleDown{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(60px)}}
+.sold-flash{animation:soldFlash 1s ease 2}
+@keyframes soldFlash{0%{background-color:rgba(255,215,0,.3)}50%{background-color:rgba(255,215,0,.1)}100%{background-color:transparent}}
+.room-card{background:linear-gradient(135deg,#111827,#1f2937)}
+</style>
+</head>
+<body class="text-white min-h-screen">
+
+<!-- ==================== JOIN / CREATE ROOM SCREEN ==================== -->
+<div id="lobbyScreen" class="min-h-screen flex items-center justify-center p-4">
+  <div class="max-w-2xl w-full bg-gray-900 rounded-2xl p-6 shadow-2xl border border-gray-800">
+    <h1 class="text-3xl font-extrabold text-center bg-gradient-to-r from-yellow-400 to-orange-500 bg-clip-text text-transparent mb-2">🏏 LIVE CRICKET AUCTION</h1>
+    <p class="text-center text-gray-400 text-sm mb-8">Online multiplayer · up to 10 players · realtime bidding</p>
+    
+    <div class="space-y-6">
+      <div class="bg-gray-800/50 p-4 rounded-xl">
+        <label class="block text-sm font-semibold mb-2 text-yellow-400">YOUR DISPLAY NAME</label>
+        <input type="text" id="playerNameInput" maxlength="20" placeholder="e.g., Virat, Dhoni" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 outline-none focus:border-yellow-500" value="">
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <button onclick="createNewRoom()" class="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 py-3 rounded-xl font-bold text-lg transition">✨ CREATE NEW ROOM</button>
+        <div class="flex gap-2">
+          <input type="text" id="roomCodeInput" placeholder="Enter Room Code" class="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 uppercase text-center font-mono">
+          <button onclick="joinRoom()" class="bg-blue-600 hover:bg-blue-500 px-5 py-2 rounded-xl font-bold">JOIN</button>
+        </div>
+      </div>
+      <div id="roomInfo" class="text-center text-sm text-gray-500 mt-2"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== MAIN AUCTION SCREEN ==================== -->
+<div id="auctionScreen" class="hidden min-h-screen flex flex-col">
+  <!-- Header / Room Bar -->
+  <div class="bg-gray-900 border-b border-gray-700 px-4 py-2 flex flex-wrap items-center justify-between gap-2">
+    <div class="flex items-center gap-2 text-sm">
+      <span class="bg-purple-700 px-2 py-1 rounded-md font-mono">🏠 Room: <span id="roomCodeDisplay" class="font-bold">----</span></span>
+      <span id="roleBadge" class="bg-yellow-600/30 text-yellow-300 px-2 py-1 rounded-md text-xs font-bold">👑 ADMIN</span>
+    </div>
+    <div class="flex gap-2 text-sm">
+      <span id="playersCountDisplay" class="bg-gray-800 px-2 py-1 rounded">👥 0/10</span>
+      <button onclick="showSquads()" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs">👥 Squads</button>
+      <button onclick="exportResults()" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs">📊 Export</button>
+      <button onclick="copyRoomLink()" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs">🔗 Copy Link</button>
+      <button onclick="leaveRoom()" class="bg-red-800 hover:bg-red-700 px-3 py-1 rounded text-xs">🚪 Leave</button>
+    </div>
+  </div>
+
+  <!-- Auction Body -->
+  <div class="flex-1 p-4 overflow-y-auto max-w-7xl mx-auto w-full">
+    <!-- Current Player Card -->
+    <div id="playerCardArea" class="bg-gradient-to-r from-gray-800 to-gray-900 rounded-2xl p-5 border border-yellow-500/30 mb-4">
+      <div class="flex justify-between items-start">
+        <div><span class="text-xs text-gray-400">CURRENT PLAYER</span><h2 id="currentPlayerName" class="text-3xl font-extrabold text-yellow-400">—</h2></div>
+        <div><span id="playerIndexDisplay" class="text-gray-500 text-sm">0/0</span></div>
+      </div>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
+        <div><div class="text-[10px] text-gray-400">Category</div><div id="playerRole" class="font-semibold">—</div></div>
+        <div><div class="text-[10px] text-gray-400">Base Price</div><div id="playerBase" class="font-bold text-yellow-400">—</div></div>
+        <div><div class="text-[10px] text-gray-400">Country</div><div id="playerCountry" class="font-semibold">—</div></div>
+        <div><div class="text-[10px] text-gray-400">Tier</div><div id="playerTier" class="font-semibold">—</div></div>
+      </div>
+    </div>
+
+    <!-- Timer & Bid Info -->
+    <div class="bg-black/30 rounded-xl p-3 mb-4">
+      <div class="flex justify-between items-center">
+        <div><span class="text-3xl font-mono font-bold text-green-400" id="timerSeconds">30</span><span class="text-gray-400 text-sm"> sec</span></div>
+        <div class="text-right"><div class="text-xs text-gray-400">CURRENT BID</div><div id="currentBidAmount" class="text-2xl md:text-3xl font-extrabold text-yellow-400">₹0</div></div>
+      </div>
+      <div class="w-full bg-gray-700 rounded-full h-1.5 mt-1"><div id="timerBar" class="bg-green-500 h-1.5 rounded-full transition-all" style="width:100%"></div></div>
+      <div id="bidIncrementHint" class="text-xs text-gray-500 mt-1">Next increment: ₹5 L</div>
+    </div>
+
+    <!-- Player Panels (Dynamic up to 10) -->
+    <div id="playersGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 mb-5"></div>
+
+    <!-- Admin Controls (visible only to admin) -->
+    <div id="adminControls" class="hidden mt-4 border-t border-gray-700 pt-4">
+      <div class="bg-gray-800/50 rounded-xl p-4">
+        <h3 class="font-bold text-yellow-400 text-sm mb-2">⚙️ ADMIN CONTROLS</h3>
+        <div class="flex flex-wrap gap-2 mb-3">
+          <button onclick="toggleAuctionPause()" id="pauseBtn" class="bg-yellow-700 hover:bg-yellow-600 px-4 py-2 rounded-lg text-sm font-bold">⏸ PAUSE</button>
+          <button onclick="document.getElementById('excelUpload').click()" class="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-lg text-sm font-bold">📁 IMPORT EXCEL</button>
+          <input type="file" id="excelUpload" accept=".xlsx,.xls,.csv" class="hidden" onchange="importExcel(event)">
+          <button id="adminAddPlayerBtn" onclick="openAddPlayerModal()" class="bg-emerald-700 hover:bg-emerald-600 px-4 py-2 rounded-lg text-sm font-bold">➕ ADD PLAYER</button>
+          <button id="adminSkipBtn" onclick="adminSkipPlayer()" class="bg-orange-700 hover:bg-orange-600 px-4 py-2 rounded-lg text-sm">⏩ SKIP</button>
+          <button id="adminSoldBtn" onclick="adminMarkSold()" class="bg-yellow-600 hover:bg-yellow-500 px-4 py-2 rounded-lg text-sm font-bold">🔨 SOLD</button>
+          <button id="adminUnsoldBtn" onclick="adminMarkUnsold()" class="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-lg text-sm">❌ UNSOLD</button>
+          <button id="adminUndoBidBtn" onclick="adminUndoLastBid()" class="bg-indigo-700 hover:bg-indigo-600 px-4 py-2 rounded-lg text-sm">↩ UNDO BID</button>
+          <button id="adminUndoPrevPlayerBtn" onclick="adminUndoPrevPlayer()" class="bg-rose-700 hover:bg-rose-600 px-4 py-2 rounded-lg text-sm">⏪ UNDO PREV</button>
+          <button id="adminResetAuctionBtn" onclick="adminResetAuction()" class="bg-red-800 hover:bg-red-700 px-4 py-2 rounded-lg text-sm">⚠️ RESET AUCTION</button>
+        </div>
+        <div class="text-xs text-gray-400">Admin exclusive: Add players (name, base price), skip, sell/unsold, undo actions.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Add Player Modal (Admin) -->
+<div id="addPlayerModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 hidden">
+  <div class="bg-gray-800 rounded-xl p-6 w-full max-w-md">
+    <h3 class="text-xl font-bold mb-3 text-yellow-400">Add New Player</h3>
+    <input type="text" id="newPlayerName" placeholder="Player Name" class="w-full bg-gray-700 rounded-lg px-3 py-2 mb-2 outline-none">
+    <input type="number" id="newPlayerBase" placeholder="Base Price (in Lakhs, e.g., 20)" class="w-full bg-gray-700 rounded-lg px-3 py-2 mb-2 outline-none">
+    <input type="text" id="newPlayerRole" placeholder="Category (Batsman/Bowler/All-rounder)" class="w-full bg-gray-700 rounded-lg px-3 py-2 mb-2 outline-none">
+    <input type="text" id="newPlayerCountry" placeholder="Country" class="w-full bg-gray-700 rounded-lg px-3 py-2 mb-3 outline-none">
+    <div class="flex gap-3">
+      <button onclick="addPlayerByAdmin()" class="bg-green-600 flex-1 py-2 rounded-lg font-bold">Add to Auction</button>
+      <button onclick="closeAddPlayerModal()" class="bg-gray-600 flex-1 py-2 rounded-lg">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="globalToast" class="fixed bottom-5 left-1/2 -translate-x-1/2 bg-black/90 text-white px-5 py-2 rounded-full text-sm z-50 hidden transition-all"></div>
+
+<!-- Squads Modal -->
+<div id="squadsModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 hidden">
+  <div class="bg-gray-800 rounded-xl p-6 w-full max-w-2xl max-h-[80vh] overflow-y-auto">
+    <div class="flex justify-between items-center mb-4">
+      <h3 class="text-xl font-bold text-yellow-400">All Team Squads</h3>
+      <button onclick="document.getElementById('squadsModal').classList.add('hidden')" class="bg-gray-600 px-3 py-1 rounded">Close</button>
+    </div>
+    <div id="squadsContent"></div>
+  </div>
+</div>
+
+<script>
+// ----------------------------- FIREBASE CONFIG (REPLACE WITH YOUR OWN) -----------------------------
+const firebaseConfig = {
+  apiKey: "AIzaSyAlo3jzSy-kw58nfeO_C5sxgh_gKUTKu1w",
+  authDomain: "cricket-auction-fe051.firebaseapp.com",
+  databaseURL: "https://cricket-auction-fe051-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "cricket-auction-fe051",
+  storageBucket: "cricket-auction-fe051.firebasestorage.app",
+  messagingSenderId: "92927311994",
+  appId: "1:92927311994:web:03c658fcafc6c97553bbc3"
+};
+// ----------------------------- INIT FIREBASE -----------------------------
+let app, database;
+try {
+  if (!firebase.apps.length) app = firebase.initializeApp(firebaseConfig);
+  else app = firebase.app();
+  database = firebase.database();
+} catch(e) { console.warn("Firebase init error, using mock (only local)", e); }
+
+// ----------------------------- GLOBAL STATE -----------------------------
+let currentRoomId = null;
+let myClientId = localStorage.getItem("auction_client_id");
+if(!myClientId) { myClientId = "client_"+Math.random().toString(36).substring(2)+Date.now(); localStorage.setItem("auction_client_id", myClientId); }
+let myDisplayName = "";
+let isAdmin = false;
+let activeListeners = [];
+let timerInterval = null;
+let localTimer = 30;
+const MAX_PLAYERS = 10;
+
+function showToast(msg, isError=false) {
+  let toast = document.getElementById('globalToast');
+  toast.innerText = msg;
+  toast.classList.remove('hidden');
+  setTimeout(()=> toast.classList.add('hidden'), 3000);
+}
+
+async function createNewRoom() {
+  let nameInput = document.getElementById('playerNameInput').value.trim();
+  if(!nameInput) { showToast("Enter your name first", true); return; }
+  myDisplayName = nameInput;
+  let roomCode = Math.random().toString(36).substring(2,8).toUpperCase();
+  currentRoomId = roomCode;
+  const roomRef = database.ref(`rooms/${roomCode}`);
+  const initialData = {
+    adminId: myClientId,
+    playersList: [],
+    currentPlayerIndex: 0,
+    currentBid: 0,
+    currentBidderId: null,
+    timerValue: 30,
+    phase: 'waiting',
+    participants: {
+      [myClientId]: { name: myDisplayName, purse: 15000, spent:0, squad: [], hasPassed: false, joinedAt: Date.now() }
+    },
+    auctionStarted: false,
+    soldCount: 0,
+    unsoldCount: 0,
+    actionHistory: []
+  };
+  await roomRef.set(initialData);
+  isAdmin = true;
+  joinRoomAsParticipant(roomCode);
+}
+
+async function joinRoom() {
+  let code = document.getElementById('roomCodeInput').value.trim().toUpperCase();
+  let name = document.getElementById('playerNameInput').value.trim();
+  if(!code || !name) { showToast("Room code and name required", true); return; }
+  myDisplayName = name;
+  currentRoomId = code;
+  const roomRef = database.ref(`rooms/${code}`);
+  const snapshot = await roomRef.get();
+  if(!snapshot.exists()) { showToast("Room does not exist", true); return; }
+  const roomData = snapshot.val();
+  let participantCount = Object.keys(roomData.participants || {}).length;
+  if(participantCount >= MAX_PLAYERS) { showToast(`Room full (max ${MAX_PLAYERS} players)`, true); return; }
+  if(!roomData.participants[myClientId]) {
+    await roomRef.child(`participants/${myClientId}`).set({
+      name: myDisplayName, purse: 15000, spent:0, squad: [], hasPassed: false, joinedAt: Date.now()
+    });
+  }
+  isAdmin = (roomData.adminId === myClientId);
+  joinRoomAsParticipant(code);
+}
+
+function joinRoomAsParticipant(roomCode) {
+  currentRoomId = roomCode;
+  document.getElementById('lobbyScreen').classList.add('hidden');
+  document.getElementById('auctionScreen').classList.remove('hidden');
+  document.getElementById('roomCodeDisplay').innerText = roomCode;
+  if(isAdmin) document.getElementById('roleBadge').innerHTML = "👑 ADMIN (full control)";
+  else document.getElementById('roleBadge').innerHTML = "🕹️ PLAYER";
+  setupRealtimeSync(roomCode);
+  showToast(`Joined room ${roomCode} as ${myDisplayName}`, false);
+}
+
+function setupRealtimeSync(roomId) {
+  activeListeners.forEach(off => off());
+  activeListeners = [];
+  const roomRef = database.ref(`rooms/${roomId}`);
+  const listener = roomRef.on('value', (snapshot) => {
+    const data = snapshot.val();
+    if(!data) { leaveRoom(); showToast("Room deleted or expired", true); return; }
+    renderAuctionUI(data);
+    if(data.timerValue !== undefined && data.auctionStarted && !data.paused) {
+      if(localTimer !== data.timerValue) {
+        localTimer = data.timerValue;
+        updateTimerUI(localTimer);
+      }
+      if(data.auctionStarted && !data.paused) {
+        if(timerInterval) clearInterval(timerInterval);
+        startLocalTimerSync(data);
+      }
+    } else if(!data.auctionStarted) {
+      if(timerInterval) clearInterval(timerInterval);
+    }
+  });
+  activeListeners.push(() => roomRef.off('value', listener));
+}
+
+function startLocalTimerSync(roomData) {
+  if(timerInterval) clearInterval(timerInterval);
+  localTimer = roomData.timerValue || 30;
+  updateTimerUI(localTimer);
+  timerInterval = setInterval(async () => {
+    if(!currentRoomId) return;
+    localTimer--;
+    updateTimerUI(localTimer);
+    if(localTimer <= 0) {
+      clearInterval(timerInterval);
+      if(isAdmin && roomData.auctionStarted) {
+        showToast("Timer ended - marking unsold!", false);
+        adminMarkUnsold();
+      }
+    }
+  }, 1000);
+}
+
+function updateTimerUI(sec) {
+  let el = document.getElementById('timerSeconds');
+  if(el) el.innerText = sec;
+  const percent = (sec / 30) * 100;
+  let bar = document.getElementById('timerBar');
+  if(bar) bar.style.width = Math.max(0, percent)+'%';
+  if(sec <= 5) document.getElementById('timerSeconds')?.classList.add('timer-danger');
+  else document.getElementById('timerSeconds')?.classList.remove('timer-danger');
+}
+
+function renderAuctionUI(data) {
+  if(!data) return;
+  const participants = data.participants || {};
+  const players = data.playersList || [];
+  const currentIdx = data.currentPlayerIndex;
+  const currentPlayer = players[currentIdx];
+  const currentBid = data.currentBid || 0;
+  const currentBidderId = data.currentBidderId;
+  
+  if(currentPlayer && !currentPlayer.sold) {
+    document.getElementById('currentPlayerName').innerText = currentPlayer.name || '—';
+    document.getElementById('playerRole').innerText = currentPlayer.role || 'Unknown';
+    let baseShow = (currentPlayer.basePrice >= 100 ? (currentPlayer.basePrice/100).toFixed(1)+' Cr' : currentPlayer.basePrice+' L');
+    document.getElementById('playerBase').innerHTML = baseShow;
+    document.getElementById('playerCountry').innerText = currentPlayer.country || '—';
+    document.getElementById('playerTier').innerText = currentPlayer.tier || 'Standard';
+    document.getElementById('playerIndexDisplay').innerText = `${currentIdx+1}/${players.length}`;
+  } else {
+    document.getElementById('currentPlayerName').innerText = '🏆 AUCTION END';
+  }
+  document.getElementById('currentBidAmount').innerHTML = currentBid>=100 ? `₹${(currentBid/100).toFixed(2)} Cr` : `₹${currentBid} L`;
+  let nextInc = getIncrement(currentBid);
+  document.getElementById('bidIncrementHint').innerHTML = `Next increment: +₹${nextInc} L`;
+  
+  let container = document.getElementById('playersGrid');
+  if(!container) return;
+  let entries = Object.entries(participants);
+  container.innerHTML = '';
+  let idx = 0;
+  for(let [cid, user] of entries) {
+    let isActiveBidder = (currentBidderId === cid);
+    let colorClass = idx%3===0? 'border-red-500' : (idx%3===1? 'border-blue-500' : 'border-green-500');
+    let btnColor = idx%3===0? 'bg-red-600' : (idx%3===1? 'bg-blue-600' : 'bg-green-600');
+    let canBid = (currentPlayer && !currentPlayer.sold && data.auctionStarted && !data.paused);
+    let purseFormatted = user.purse>=100? (user.purse/100).toFixed(2)+' Cr' : user.purse+' L';
+    let squadLen = (user.squad?.length || 0);
+    let disabledBtn = !canBid || (user.purse < (currentBid+nextInc));
+    let passedBadge = user.hasPassed ? '<span class="text-[10px] bg-gray-700 px-1 rounded">PASSED</span>' : '';
+    container.innerHTML += `
+      <div class="owner-panel bg-gray-900 rounded-xl p-2 border-2 ${colorClass} ${isActiveBidder?'active-bidder':''}" style="${isActiveBidder? 'box-shadow: 0 0 20px currentColor':''}">
+        <div class="flex justify-between items-center"><span class="font-bold text-sm ${colorClass.replace('border','text')}">${user.name}</span> ${passedBadge}</div>
+        <div class="text-xs mt-1"><span class="text-gray-400">Purse:</span> <span class="text-yellow-300">${purseFormatted}</span></div>
+        <div class="text-xs"><span class="text-gray-400">Squad:</span> ${squadLen}/30</div>
+        <button onclick="placeBidRemote('${cid}')" class="mt-2 w-full ${btnColor} hover:brightness-110 font-bold py-1.5 rounded-lg text-sm transition disabled:opacity-30" ${disabledBtn ? 'disabled' : ''}>💰 BID</button>
+        <button onclick="passRemote('${cid}')" class="mt-1 w-full bg-gray-700 hover:bg-gray-600 text-xs py-1 rounded-lg" ${!canBid ? 'disabled' : ''}>PASS</button>
+      </div>
+    `;
+    idx++;
+  }
+  document.getElementById('playersCountDisplay').innerHTML = `👥 ${entries.length}/${MAX_PLAYERS}`;
+  
+  if(isAdmin && data.auctionStarted) document.getElementById('adminControls').classList.remove('hidden');
+  else if(isAdmin && !data.auctionStarted) document.getElementById('adminControls').classList.remove('hidden');
+  else document.getElementById('adminControls').classList.add('hidden');
+  
+  if(isAdmin && !data.auctionStarted && players.length > 0) {
+    let startBtnExists = document.getElementById('startAuctionBtn');
+    if(!startBtnExists) {
+      let div = document.createElement('div');
+      div.id = 'startAuctionDiv';
+      div.innerHTML = `<button id="startAuctionBtn" onclick="startAuction()" class="mt-3 w-full bg-yellow-600 hover:bg-yellow-500 py-2 rounded-xl font-bold">🚀 START AUCTION</button>`;
+      document.getElementById('adminControls').appendChild(div);
+    }
+  } else {
+    let existing = document.getElementById('startAuctionDiv');
+    if(existing) existing.remove();
+  }
+}
+
+window.placeBidRemote = async function(targetClientId) {
+  if(!currentRoomId) return;
+  let roomRef = database.ref(`rooms/${currentRoomId}`);
+  let snap = await roomRef.get();
+  let data = snap.val();
+  if(!data || !data.auctionStarted) { showToast("Auction not started", true); return; }
+  let currentPlayer = data.playersList[data.currentPlayerIndex];
+  if(!currentPlayer || currentPlayer.sold) return;
+  let user = data.participants[targetClientId];
+  if(!user) return;
+  let currentBid = data.currentBid || 0;
+  let inc = getIncrement(currentBid);
+  let newBid = currentBid + inc;
+  if(user.purse < newBid) { showToast("Insufficient purse", true); return; }
+  await roomRef.update({
+    currentBid: newBid,
+    currentBidderId: targetClientId,
+    timerValue: 30,
+    [`participants/${targetClientId}/hasPassed`]: false
+  });
+  showToast(`${user.name} placed ₹${newBid>=100?(newBid/100).toFixed(1)+' Cr':newBid+' L'}`, false);
+};
+
+window.passRemote = async function(clientId) {
+  if(!currentRoomId) return;
+  await database.ref(`rooms/${currentRoomId}/participants/${clientId}/hasPassed`).set(true);
+  let snap = await database.ref(`rooms/${currentRoomId}`).get();
+  let data = snap.val();
+  let allPassed = Object.values(data.participants || {}).every(p => p.hasPassed === true);
+  if(allPassed && data.auctionStarted && data.playersList[data.currentPlayerIndex] && !data.playersList[data.currentPlayerIndex].sold) {
+    if(isAdmin) adminMarkUnsold();
+    else showToast("All players passed, admin will mark unsold", false);
+  }
+};
+
+window.adminMarkSold = async function() {
+  if(!isAdmin) return;
+  let ref = database.ref(`rooms/${currentRoomId}`);
+  let snap = await ref.get();
+  let data = snap.val();
+  if(!data.auctionStarted) return;
+  let currentPlayer = data.playersList[data.currentPlayerIndex];
+  if(!currentPlayer || currentPlayer.sold) return;
+  let bidderId = data.currentBidderId;
+  if(!bidderId) { showToast("No active bidder", true); return; }
+  let bidder = data.participants[bidderId];
+  let price = data.currentBid || currentPlayer.basePrice;
+  let updatedPlayers = [...data.playersList];
+  updatedPlayers[data.currentPlayerIndex] = {...currentPlayer, sold: true, soldTo: bidderId, soldPrice: price};
+  let updatedSquad = [...(bidder.squad||[]), {name: currentPlayer.name, price: price}];
+  let newPurse = bidder.purse - price;
+  let actionHist = [...(data.actionHistory||[]), {type:'sold', playerIndex: data.currentPlayerIndex, price, bidderId}];
+  await ref.update({
+    playersList: updatedPlayers,
+    [`participants/${bidderId}/squad`]: updatedSquad,
+    [`participants/${bidderId}/purse`]: newPurse,
+    [`participants/${bidderId}/spent`]: (bidder.spent||0)+price,
+    actionHistory: actionHist,
+    soldCount: (data.soldCount||0)+1,
+    currentBid: 0,
+    currentBidderId: null,
+    timerValue: 30
+  });
+  confetti({particleCount:120, spread:60});
+  showToast(`SOLD to ${bidder.name} for ${price>=100?(price/100).toFixed(1)+' Cr':price+' L'}!`, false);
+  await advanceToNextPlayerAdmin();
+};
+
+window.adminMarkUnsold = async function() {
+  if(!isAdmin) return;
+  let ref = database.ref(`rooms/${currentRoomId}`);
+  let snap = await ref.get();
+  let data = snap.val();
+  if(!data.auctionStarted) return;
+  let players = [...data.playersList];
+  let idx = data.currentPlayerIndex;
+  if(players[idx].sold) return;
+  players[idx] = {...players[idx], sold: true, unsold: true};
+  let actionHist = [...(data.actionHistory||[]), {type:'unsold', playerIndex: idx}];
+  await ref.update({
+    playersList: players,
+    actionHistory: actionHist,
+    unsoldCount: (data.unsoldCount||0)+1,
+    currentBid: 0,
+    currentBidderId: null,
+    timerValue: 30
+  });
+  showToast("Player marked UNSOLD", false);
+  await advanceToNextPlayerAdmin();
+};
+
+window.adminSkipPlayer = async function() {
+  if(!isAdmin) return;
+  await advanceToNextPlayerAdmin();
+};
+
+async function advanceToNextPlayerAdmin() {
+  let ref = database.ref(`rooms/${currentRoomId}`);
+  let snap = await ref.get();
+  let data = snap.val();
+  let players = data.playersList;
+  let nextIdx = data.currentPlayerIndex + 1;
+  let updates = { currentPlayerIndex: nextIdx, currentBid: 0, currentBidderId: null, timerValue: 30 };
+  let particUpdates = {};
+  for(let pid in data.participants) particUpdates[`participants/${pid}/hasPassed`] = false;
+  if(nextIdx >= players.length) {
+    updates.auctionStarted = false;
+    updates.phase = 'completed';
+    showToast("AUCTION COMPLETED! All players done.", false);
+  } else {
+    let nextPlayer = players[nextIdx];
+    if(nextPlayer && !nextPlayer.sold) updates.currentBid = nextPlayer.basePrice || 0;
+  }
+  await ref.update({...updates, ...particUpdates});
+}
+
+window.adminUndoLastBid = async function() {
+  if(!isAdmin) return;
+  showToast("Bid undo not fully implemented, use Skip", true);
+};
+
+window.adminUndoPrevPlayer = async function() {
+  if(!isAdmin || !currentRoomId) return;
+  let ref = database.ref(`rooms/${currentRoomId}`);
+  let snap = await ref.get();
+  let data = snap.val();
+  if(!data.actionHistory || data.actionHistory.length === 0) { showToast("Nothing to undo", true); return; }
+  let lastAction = data.actionHistory[data.actionHistory.length - 1];
+  let players = [...data.playersList];
+  let updates = { actionHistory: data.actionHistory.slice(0, -1) };
+  if(lastAction.type === 'sold') {
+    let player = players[lastAction.playerIndex];
+    player.sold = false;
+    player.soldTo = null;
+    let bidderId = lastAction.bidderId;
+    let bidder = data.participants[bidderId];
+    if(bidder && bidder.squad) {
+      bidder.squad = bidder.squad.filter((p, i) => i !== bidder.squad.length - 1);
+      bidder.purse += lastAction.price;
+      bidder.spent -= lastAction.price;
+      updates[`participants/${bidderId}`] = bidder;
+    }
+    updates.playersList = players;
+    updates.soldCount = Math.max(0, (data.soldCount || 1) - 1);
+    showToast("Undo sold - player back in auction", false);
+  } else if(lastAction.type === 'unsold') {
+    let player = players[lastAction.playerIndex];
+    player.sold = false;
+    player.unsold = false;
+    updates.playersList = players;
+    updates.unsoldCount = Math.max(0, (data.unsoldCount || 1) - 1);
+    showToast("Undo unsold - player back in auction", false);
+  } else {
+    showToast("Nothing to undo", true);
+    return;
+  }
+  updates.currentPlayerIndex = lastAction.playerIndex;
+  updates.currentBid = players[lastAction.playerIndex]?.basePrice || 0;
+  updates.currentBidderId = null;
+  updates.timerValue = 30;
+  let particUpdates = {};
+  for(let pid in data.participants) particUpdates[`participants/${pid}/hasPassed`] = false;
+  await ref.update({...updates, ...particUpdates});
+};
+
+window.adminResetAuction = async function() {
+  if(!confirm("RESET entire auction? All sold data lost.")) return;
+  let ref = database.ref(`rooms/${currentRoomId}`);
+  let snap = await ref.get();
+  let data = snap.val();
+  let freshPlayers = (data.playersList || []).map(p => ({...p, sold: false, unsold: false, soldTo: null}));
+  let freshParticipants = {};
+  for(let [cid, user] of Object.entries(data.participants)) {
+    freshParticipants[cid] = {...user, purse: 15000, spent: 0, squad: [], hasPassed: false};
+  }
+  await ref.update({
+    playersList: freshPlayers, currentPlayerIndex: 0, currentBid: freshPlayers[0]?.basePrice || 0, currentBidderId: null,
+    timerValue: 30, auctionStarted: false, soldCount:0, unsoldCount:0, actionHistory: [],
+    participants: freshParticipants
+  });
+  showToast("Auction reset", false);
+};
+
+window.toggleAuctionPause = async function() {
+  if(!isAdmin || !currentRoomId) return;
+  let ref = database.ref(`rooms/${currentRoomId}`);
+  let snap = await ref.get();
+  let data = snap.val();
+  let isPaused = data.paused || false;
+  if(!isPaused) {
+    if(timerInterval) clearInterval(timerInterval);
+    await ref.update({ paused: true });
+    showToast("⏸ Auction PAUSED", false);
+  } else {
+    await ref.update({ paused: false, timerValue: data.timerValue || localTimer });
+    startLocalTimerSync({timerValue: data.timerValue || localTimer, auctionStarted: true});
+    showToast("▶ Auction RESUMED", false);
+  }
+};
+
+window.startAuction = async function() {
+  if(!isAdmin) return;
+  let ref = database.ref(`rooms/${currentRoomId}`);
+  let snap = await ref.get();
+  let data = snap.val();
+  if(!data.playersList.length) { showToast("Add players first", true); return; }
+  let firstBase = data.playersList[0]?.basePrice || 0;
+  await ref.update({ auctionStarted: true, currentBid: firstBase, currentPlayerIndex: 0, timerValue: 30, phase: 'live' });
+  showToast("Auction Started! Bidding open", false);
+};
+
+window.openAddPlayerModal = () => document.getElementById('addPlayerModal').classList.remove('hidden');
+window.closeAddPlayerModal = () => document.getElementById('addPlayerModal').classList.add('hidden');
+window.addPlayerByAdmin = async function() {
+  if(!isAdmin) return;
+  let name = document.getElementById('newPlayerName').value.trim();
+  let base = parseInt(document.getElementById('newPlayerBase').value);
+  let role = document.getElementById('newPlayerRole').value.trim() || "Player";
+  let country = document.getElementById('newPlayerCountry').value.trim() || "International";
+  if(!name || isNaN(base) || base<1) { showToast("Valid name & base price needed", true); return; }
+  let newPlayer = { name, basePrice: base, role, country, tier: "Custom", sold: false };
+  let ref = database.ref(`rooms/${currentRoomId}`);
+  let snap = await ref.get();
+  let players = snap.val().playersList || [];
+  players.push(newPlayer);
+  await ref.update({ playersList: players });
+  closeAddPlayerModal();
+  showToast(`Added ${name} to auction queue`, false);
+};
+
+window.importExcel = async function(event) {
+  if(!isAdmin) return;
+  let file = event.target.files[0];
+  if(!file) return;
+  let reader = new FileReader();
+  reader.onload = async function(e) {
+    try {
+      let data = new Uint8Array(e.target.result);
+      let wb = XLSX.read(data, {type: 'array'});
+      let ws = wb.Sheets[wb.SheetNames[0]];
+      let json = XLSX.utils.sheet_to_json(ws);
+      if(!json.length) { showToast("Empty file", true); return; }
+      let hdr = Object.keys(json[0]);
+      let findCol = (patterns) => {
+        for(let i=0; i<hdr.length; i++) {
+          for(let p of patterns) if(hdr[i].toLowerCase().includes(p)) return i;
+        }
+        return -1;
+      };
+      let nc = findCol(['player name', 'name']);
+      let bc = findCol(['base price', 'price']);
+      let rc = findCol(['category', 'role']);
+      let cc = findCol(['country', 'nation']);
+      let tc = findCol(['tier']);
+      let parsePrice = (val) => {
+        if(typeof val === 'number') return val;
+        let s = String(val||'').toLowerCase();
+        if(s.includes('cr')) return parseFloat(s.replace(/[^0-9.]/g,'')) * 100;
+        if(s.includes('l')) return parseFloat(s.replace(/[^0-9.]/g,''));
+        return parseFloat(s)||0;
+      };
+      let newPlayers = json.filter(r => hdr[nc] && r[hdr[nc]]).map(r => ({
+        name: r[hdr[nc]],
+        basePrice: parsePrice(r[hdr[bc]]),
+        role: hdr[rc] ? (r[hdr[rc]] || 'Batsman') : 'Batsman',
+        country: hdr[cc] ? (r[hdr[cc]] || 'International') : 'International',
+        tier: hdr[tc] ? (r[hdr[tc]] || 'Standard') : 'Standard',
+        sold: false
+      }));
+      let ref = database.ref(`rooms/${currentRoomId}`);
+      let snap = await ref.get();
+      let existing = snap.val().playersList || [];
+      let combined = [...existing, ...newPlayers];
+      await ref.update({ playersList: combined });
+      showToast(`Imported ${newPlayers.length} players!`, false);
+    } catch(err) { showToast("Error reading file: " + err.message, true); }
+  };
+  reader.readAsArrayBuffer(file);
+  event.target.value = '';
+};
+
+function getIncrement(current) {
+  if(current<100) return 5;
+  if(current<300) return 10;
+  return 20;
+}
+
+window.leaveRoom = () => { if(timerInterval) clearInterval(timerInterval); location.reload(); };
+window.copyRoomLink = () => { let url = window.location.href.split('?')[0] + `?room=${currentRoomId}`; navigator.clipboard.writeText(url); showToast("Link copied", false); };
+
+window.showSquads = async function() {
+  if(!currentRoomId) return;
+  let ref = database.ref(`rooms/${currentRoomId}`);
+  let snap = await ref.get();
+  let data = snap.val();
+  if(!data) return;
+  let participants = data.participants || {};
+  let html = '';
+  for(let [cid, user] of Object.entries(participants)) {
+    let squad = user.squad || [];
+    let roles = {};
+    squad.forEach(p => {
+      let r = p.name.match(/Batsman|Bowler|All-rounder|Wicketkeeper/)?.[0] || 'Other';
+      if(!roles[r]) roles[r] = [];
+      roles[r].push(p);
+    });
+    html += `<div class="mb-4 bg-gray-700 p-3 rounded-lg">
+      <div class="font-bold text-lg text-yellow-400">${user.name}</div>
+      <div class="text-xs text-gray-400 mb-2">Purse: ₹${user.purse >= 100 ? (user.purse/100).toFixed(1)+' Cr' : user.purse+' L'} | Spent: ₹${user.spent >= 100 ? (user.spent/100).toFixed(1)+' Cr' : user.spent+' L'} | Players: ${squad.length}</div>`;
+    if(squad.length === 0) {
+      html += '<div class="text-gray-500 text-sm">No players yet</div>';
+    } else {
+      for(let r of Object.keys(roles).sort()) {
+        html += `<div class="text-sm font-semibold text-blue-300 mt-2">${r}</div>`;
+        roles[r].forEach(p => {
+          html += `<div class="flex justify-between text-sm py-0.5 border-b border-gray-600"><span>${p.name}</span><span class="text-yellow-400">₹${p.price >= 100 ? (p.price/100).toFixed(1)+' Cr' : p.price+' L'}</span></div>`;
+        });
+      }
+    }
+    html += '</div>';
+  }
+  document.getElementById('squadsContent').innerHTML = html;
+  document.getElementById('squadsModal').classList.remove('hidden');
+};
+
+window.exportResults = async function() {
+  if(!currentRoomId) return;
+  let ref = database.ref(`rooms/${currentRoomId}`);
+  let snap = await ref.get();
+  let data = snap.val();
+  if(!data) return;
+  let participants = data.participants || {};
+  let csv = 'Team,Purse Remaining,Spent,Player Name,Price\n';
+  for(let [cid, user] of Object.entries(participants)) {
+    let squad = user.squad || [];
+    if(squad.length === 0) {
+      csv += `${user.name},${user.purse},${user.spent},,\n`;
+    } else {
+      squad.forEach(p => {
+        csv += `${user.name},${user.purse},${user.spent},${p.name},${p.price}\n`;
+      });
+    }
+  }
+  let blob = new Blob([csv], {type: 'text/csv'});
+  let a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `auction_${currentRoomId}.csv`; a.click();
+};
+
+if(window.location.search.includes('room=')) {
+  let param = new URLSearchParams(window.location.search).get('room');
+  if(param) document.getElementById('roomCodeInput').value = param;
+}
+</script>
+</body>
+</html>
