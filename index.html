@@ -337,20 +337,15 @@ function renderAuctionUI(data) {
     let isActiveBidder = (currentBidderId === cid);
     let colorClass = idx%3===0? 'border-red-500' : (idx%3===1? 'border-blue-500' : 'border-green-500');
     let btnColor = idx%3===0? 'bg-red-600' : (idx%3===1? 'bg-blue-600' : 'bg-green-600');
-    let hasActiveBid = currentBidderId !== null;
     let canBid = (currentPlayer && !currentPlayer.sold && data.auctionStarted && !data.paused);
-    let canStartBidding = hasActiveBid || (currentBid > 0 && currentBidderId === cid);
     let purseFormatted = user.purse>=100? (user.purse/100).toFixed(2)+' Cr' : user.purse+' L';
     let squadLen = (user.squad?.length || 0);
     let isMe = (cid === myClientId);
-    let alreadyBid = hasBidThisTurn && isMe;
-    let disabledBtn = !canBid || !isMe || alreadyBid;
-    if(canBid && isMe && !alreadyBid) {
-      if(!hasActiveBid) disabledBtn = false;
-      else disabledBtn = (user.purse < (currentBid+nextInc));
-    }
+    let amHighestBidder = (currentBidderId === myClientId);
+    let disabledBtn = !canBid || !isMe || amHighestBidder;
+    if(canBid && isMe && !amHighestBidder && user.purse < (currentBid+nextInc)) disabledBtn = true;
     let passedBadge = user.hasPassed ? '<span class="text-[10px] bg-gray-700 px-1 rounded">PASSED</span>' : '';
-    let bidBtnText = alreadyBid ? '⏳ BIDDED' : '💰 BID';
+    let bidBtnText = amHighestBidder ? '✓ TOP BID' : '💰 BID';
     let myControls = isMe ? `
         <button onclick="placeBidRemote()" class="mt-2 w-full ${btnColor} hover:brightness-110 font-bold py-1.5 rounded-lg text-sm transition disabled:opacity-30" ${disabledBtn ? 'disabled' : ''}>${bidBtnText}</button>
         <button onclick="passRemote()" class="mt-1 w-full bg-gray-700 hover:bg-gray-600 text-xs py-1 rounded-lg" ${!canBid || alreadyBid ? 'disabled' : ''}>PASS</button>
@@ -391,8 +386,6 @@ window.placeBidRemote = async function() {
   let snap = await roomRef.get();
   let data = snap.val();
   if(!data || !data.auctionStarted) { showToast("Auction not started", true); return; }
-  if(data.currentBidderId === myClientId) { showToast("You already have highest bid!", true); return; }
-  if(hasBidThisTurn) { showToast("You already bid this round", true); return; }
   let currentPlayer = data.playersList[data.currentPlayerIndex];
   if(!currentPlayer || currentPlayer.sold) return;
   let user = data.participants[myClientId];
@@ -401,14 +394,13 @@ window.placeBidRemote = async function() {
   let inc = getIncrement(currentBid);
   let newBid = currentBid + inc;
   if(user.purse < newBid) { showToast("Insufficient purse", true); return; }
-  hasBidThisTurn = true;
-  renderAuctionUI(data);
   await roomRef.update({
     currentBid: newBid,
     currentBidderId: myClientId,
     timerValue: 30,
     [`participants/${myClientId}/hasPassed`]: false
   });
+  showToast(`${user.name} placed ₹${newBid>=100?(newBid/100).toFixed(1)+' Cr':newBid+' L'}`, false);
   showToast(`${user.name} placed ₹${newBid>=100?(newBid/100).toFixed(1)+' Cr':newBid+' L'}`, false);
 };
 
