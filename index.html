@@ -173,8 +173,8 @@ try {
 
 // ----------------------------- GLOBAL STATE -----------------------------
 let currentRoomId = null;
-let myClientId = localStorage.getItem("auction_client_id");
-if(!myClientId) { myClientId = "client_"+Math.random().toString(36).substring(2)+Date.now(); localStorage.setItem("auction_client_id", myClientId); }
+let myClientId = sessionStorage.getItem("auction_client_id") || "client_"+Math.random().toString(36).substring(2)+Date.now();
+sessionStorage.setItem("auction_client_id", myClientId);
 let myDisplayName = "";
 let isAdmin = false;
 let activeListeners = [];
