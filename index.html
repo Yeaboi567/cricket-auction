@@ -180,7 +180,6 @@ let isAdmin = false;
 let activeListeners = [];
 let timerInterval = null;
 let localTimer = 30;
-let hasBidThisTurn = false;
 const MAX_PLAYERS = 10;
 
 function showToast(msg, isError=false) {
@@ -348,7 +347,7 @@ function renderAuctionUI(data) {
     let bidBtnText = amHighestBidder ? '✓ TOP BID' : '💰 BID';
     let myControls = isMe ? `
         <button onclick="placeBidRemote()" class="mt-2 w-full ${btnColor} hover:brightness-110 font-bold py-1.5 rounded-lg text-sm transition disabled:opacity-30" ${disabledBtn ? 'disabled' : ''}>${bidBtnText}</button>
-        <button onclick="passRemote()" class="mt-1 w-full bg-gray-700 hover:bg-gray-600 text-xs py-1 rounded-lg" ${!canBid || alreadyBid ? 'disabled' : ''}>PASS</button>
+        <button onclick="passRemote()" class="mt-1 w-full bg-gray-700 hover:bg-gray-600 text-xs py-1 rounded-lg" ${!canBid || amHighestBidder ? 'disabled' : ''}>PASS</button>
     ` : '';
     container.innerHTML += `
       <div class="owner-panel bg-gray-900 rounded-xl p-2 border-2 ${colorClass} ${isActiveBidder?'active-bidder':''}" style="${isActiveBidder? 'box-shadow: 0 0 20px currentColor':''}">
