@@ -337,15 +337,19 @@ function renderAuctionUI(data) {
     let canBid = (currentPlayer && !currentPlayer.sold && data.auctionStarted && !data.paused);
     let purseFormatted = user.purse>=100? (user.purse/100).toFixed(2)+' Cr' : user.purse+' L';
     let squadLen = (user.squad?.length || 0);
-    let disabledBtn = !canBid || (user.purse < (currentBid+nextInc));
+    let isMe = (cid === myClientId);
+    let disabledBtn = !canBid || (user.purse < (currentBid+nextInc)) || !isMe;
     let passedBadge = user.hasPassed ? '<span class="text-[10px] bg-gray-700 px-1 rounded">PASSED</span>' : '';
+    let myControls = isMe ? `
+        <button onclick="placeBidRemote()" class="mt-2 w-full ${btnColor} hover:brightness-110 font-bold py-1.5 rounded-lg text-sm transition disabled:opacity-30" ${disabledBtn ? 'disabled' : ''}>💰 BID</button>
+        <button onclick="passRemote()" class="mt-1 w-full bg-gray-700 hover:bg-gray-600 text-xs py-1 rounded-lg" ${!canBid ? 'disabled' : ''}>PASS</button>
+    ` : '';
     container.innerHTML += `
       <div class="owner-panel bg-gray-900 rounded-xl p-2 border-2 ${colorClass} ${isActiveBidder?'active-bidder':''}" style="${isActiveBidder? 'box-shadow: 0 0 20px currentColor':''}">
         <div class="flex justify-between items-center"><span class="font-bold text-sm ${colorClass.replace('border','text')}">${user.name}</span> ${passedBadge}</div>
         <div class="text-xs mt-1"><span class="text-gray-400">Purse:</span> <span class="text-yellow-300">${purseFormatted}</span></div>
         <div class="text-xs"><span class="text-gray-400">Squad:</span> ${squadLen}/30</div>
-        <button onclick="placeBidRemote('${cid}')" class="mt-2 w-full ${btnColor} hover:brightness-110 font-bold py-1.5 rounded-lg text-sm transition disabled:opacity-30" ${disabledBtn ? 'disabled' : ''}>💰 BID</button>
-        <button onclick="passRemote('${cid}')" class="mt-1 w-full bg-gray-700 hover:bg-gray-600 text-xs py-1 rounded-lg" ${!canBid ? 'disabled' : ''}>PASS</button>
+        ${myControls}
       </div>
     `;
     idx++;
@@ -370,7 +374,7 @@ function renderAuctionUI(data) {
   }
 }
 
-window.placeBidRemote = async function(targetClientId) {
+window.placeBidRemote = async function() {
   if(!currentRoomId) return;
   let roomRef = database.ref(`rooms/${currentRoomId}`);
   let snap = await roomRef.get();
@@ -378,7 +382,7 @@ window.placeBidRemote = async function(targetClientId) {
   if(!data || !data.auctionStarted) { showToast("Auction not started", true); return; }
   let currentPlayer = data.playersList[data.currentPlayerIndex];
   if(!currentPlayer || currentPlayer.sold) return;
-  let user = data.participants[targetClientId];
+  let user = data.participants[myClientId];
   if(!user) return;
   let currentBid = data.currentBid || 0;
   let inc = getIncrement(currentBid);
@@ -386,16 +390,16 @@ window.placeBidRemote = async function(targetClientId) {
   if(user.purse < newBid) { showToast("Insufficient purse", true); return; }
   await roomRef.update({
     currentBid: newBid,
-    currentBidderId: targetClientId,
+    currentBidderId: myClientId,
     timerValue: 30,
-    [`participants/${targetClientId}/hasPassed`]: false
+    [`participants/${myClientId}/hasPassed`]: false
   });
   showToast(`${user.name} placed ₹${newBid>=100?(newBid/100).toFixed(1)+' Cr':newBid+' L'}`, false);
 };
 
-window.passRemote = async function(clientId) {
+window.passRemote = async function() {
   if(!currentRoomId) return;
-  await database.ref(`rooms/${currentRoomId}/participants/${clientId}/hasPassed`).set(true);
+  await database.ref(`rooms/${currentRoomId}/participants/${myClientId}/hasPassed`).set(true);
   let snap = await database.ref(`rooms/${currentRoomId}`).get();
   let data = snap.val();
   let allPassed = Object.values(data.participants || {}).every(p => p.hasPassed === true);
